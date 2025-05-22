@@ -37,6 +37,7 @@
     "koa-body": "^4.2.0",
     "koa-body-parser": "^1.1.2",
     "koa-helmet": "^6.1.0",
+    "koa-mount": "^4.2.0",
     "koa-router": "^10.0.0",
     "koa-session": "^6.1.0",
     "mongoose": "^6.1.7",
@@ -47,8 +48,7 @@
     "react": "^17.0.2",
     "react-apollo": "^3.1.3",
     "react-dom": "^17.0.2",
-    "webpack": "^4.44.1",
-    "@rudder/rudder-service": "git+ssh://git@github.com/rudderlabs/rudder-service-node.git"
+    "webpack": "^4.44.1"
   },
   "devDependencies": {
     "@babel/plugin-transform-runtime": "^7.12.10",

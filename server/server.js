@@ -11,15 +11,19 @@ import Router from "koa-router";
 import {
   fetchRudderWebhookUrl,
   registerWebhooksAndScriptTag,
-  updateWebhooksAndScriptTag
+  updateWebhooksAndScriptTag,
 } from "./service/process";
 import { DBConnector } from "./dbUtils/dbConnector";
 import { dbUtils } from "./dbUtils/helpers";
-import { verifyAndDelete, validateHmac, setContentSecurityHeader } from "./webhooks/helper";
-import { createServiceApp } from "@rudder/rudder-service";
+import {
+  verifyAndDelete,
+  validateHmac,
+  setContentSecurityHeader,
+} from "./webhooks/helper";
 import serviceOptions from "./monitoring/serviceOptions";
-import { bugsnagClient, logger } from "@rudder/rudder-service";
-import { serviceRoutes } from '@rudder/rudder-service';
+import logger from "./monitoring/logger";
+import tracker from "../tracker/server";
+import mount from "koa-mount";
 
 dotenv.config();
 const port = parseInt(process.env.PORT, 10) || 8081;
@@ -41,13 +45,13 @@ DBConnector.setConfigFromEnv()
     process.exit(1);
   });
 
-  const REQUIRED_SCOPES = [
-    "read_checkouts",
-    "read_orders",
-    "read_customers",
-    "read_fulfillments",
-    "write_script_tags"
-  ];
+const REQUIRED_SCOPES = [
+  "read_checkouts",
+  "read_orders",
+  "read_customers",
+  "read_fulfillments",
+  "write_script_tags",
+];
 
 Shopify.Context.initialize({
   API_KEY: process.env.SHOPIFY_API_KEY,
@@ -71,13 +75,17 @@ Shopify.Webhooks.Registry.addHandler("APP_UNINSTALLED", {
 });
 
 app.prepare().then(async () => {
-  // const server = new Koa();
-  const server = createServiceApp(serviceOptions);
+  const server = new Koa();
   const router = new Router();
   server.keys = [Shopify.Context.API_SECRET_KEY];
   // server.use(bodyParser());
-  server.use(serviceRoutes());
   server.use(setContentSecurityHeader);
+  // Mount tracker loader snippet at /load.js
+  server.use(mount("/load.js", tracker.routes()));
+  server.use(mount("/load.js", tracker.allowedMethods()));
+  // Optionally, mount /load/health
+  server.use(mount("/load/health", tracker.routes()));
+  server.use(mount("/load/health", tracker.allowedMethods()));
 
   server.use(
     createShopifyAuth({
@@ -85,11 +93,11 @@ app.prepare().then(async () => {
       async afterAuth(ctx) {
         // Access token and shop available in ctx.state.shopify
         // const { shop, accessToken, scope } = ctx.state.shopify;
-        logger.info("Shopify Auth")
+        logger.info("Shopify Auth");
         const { shop, accessToken, scope } = ctx.state.shopify;
         const host = ctx.query.host;
         ACTIVE_SHOPIFY_SHOPS[shop] = scope;
-        
+
         try {
           const currentShopInfo = await dbUtils.getDataByShop(shop);
           if (currentShopInfo) {
@@ -137,9 +145,7 @@ app.prepare().then(async () => {
     ctx.res.statusCode = 200;
   };
 
-  router.post(
-    "/webhooks",
-    async (ctx) => {
+  router.post("/webhooks", async (ctx) => {
     try {
       const { success } = await validateHmac(ctx);
       logger.info("validation stauts", success);
@@ -175,59 +181,76 @@ app.prepare().then(async () => {
     }
   );
 
-  router.get("/register/webhooks", verifyRequest({ 
-    returnHeader: true, accessMode: 'offline', }), async (ctx) => {
-    const rudderWebhookUrl = ctx.request.query.url
-    const shop = ctx.get("shop");
-
-    try {
-      await registerWebhooksAndScriptTag(rudderWebhookUrl, shop);
-      ctx.body = { success: true };
-      ctx.status = 200;
-    } catch (err) {
-      logger.error(`error in /register/webhooks ${err}`);
-      ctx.body = { success: false, error: err.message };
-      ctx.status = 500;
-    }
-    return ctx;
-  });
-
-  router.get("/update/webhooks", verifyRequest({ 
-    returnHeader: true, accessMode: 'offline', }), async (ctx) => {
-    try {
-      const rudderWebhookUrl = ctx.request.query.url;
+  router.get(
+    "/register/webhooks",
+    verifyRequest({
+      returnHeader: true,
+      accessMode: "offline",
+    }),
+    async (ctx) => {
+      // const rudderWebhookUrl = ctx.request.query.url
+      const rudderWebhookUrl = process.env.RUDDERSTACK_WEBHOOK_URL; // Use .env value
       const shop = ctx.get("shop");
-      await updateWebhooksAndScriptTag(rudderWebhookUrl, shop);
-      ctx.body = { success: true };
-      ctx.status = 200;
-    } catch (err) {
-      logger.error(`error in /update/webhooks ${err}`);
-      ctx.body = { success: false, error: err.message };
-      ctx.status = 500;
+
+      try {
+        await registerWebhooksAndScriptTag(rudderWebhookUrl, shop);
+        ctx.body = { success: true };
+        ctx.status = 200;
+      } catch (err) {
+        logger.error(`error in /register/webhooks ${err}`);
+        ctx.body = { success: false, error: err.message };
+        ctx.status = 500;
+      }
+      return ctx;
     }
-    return ctx;
-  });
+  );
 
   router.get(
-    "/fetch/rudder-webhook", verifyRequest({
-      accessMode: 'offline',
-       returnHeader: true
-    }), async (ctx) => {
-    try {
-      logger.info("fetch/rudder-webhook ctx header", ctx.header);
+    "/update/webhooks",
+    verifyRequest({
+      returnHeader: true,
+      accessMode: "offline",
+    }),
+    async (ctx) => {
+      // const rudderWebhookUrl = ctx.request.query.url;
+      const rudderWebhookUrl = process.env.RUDDERSTACK_WEBHOOK_URL; // Use .env value
       const shop = ctx.get("shop");
-      const rudderWebhookUrl = await fetchRudderWebhookUrl(shop);
-      logger.info(`FROM FETCH ROUTE :${rudderWebhookUrl}`);
-      ctx.body = {
-        rudderWebhookUrl: rudderWebhookUrl,
-      };
-      ctx.status = 200;
-    } catch (error) {
-      logger.error(`Failed to fetch dataplane: ${error}`);
-      ctx.status = 500;
+      try {
+        await updateWebhooksAndScriptTag(rudderWebhookUrl, shop);
+        ctx.body = { success: true };
+        ctx.status = 200;
+      } catch (err) {
+        logger.error(`error in /update/webhooks ${err}`);
+        ctx.body = { success: false, error: err.message };
+        ctx.status = 500;
+      }
+      return ctx;
     }
-    return ctx;
-  });
+  );
+
+  router.get(
+    "/fetch/rudder-webhook",
+    verifyRequest({
+      accessMode: "offline",
+      returnHeader: true,
+    }),
+    async (ctx) => {
+      try {
+        logger.info("fetch/rudder-webhook ctx header", ctx.header);
+        const shop = ctx.get("shop");
+        const rudderWebhookUrl = await fetchRudderWebhookUrl(shop);
+        logger.info(`FROM FETCH ROUTE :${rudderWebhookUrl}`);
+        ctx.body = {
+          rudderWebhookUrl: rudderWebhookUrl,
+        };
+        ctx.status = 200;
+      } catch (error) {
+        logger.error(`Failed to fetch dataplane: ${error}`);
+        ctx.status = 500;
+      }
+      return ctx;
+    }
+  );
 
   // health endpoint is exposed by rudder-service
   // this route is for kubernetes readiness and liveness probes
@@ -244,27 +267,25 @@ app.prepare().then(async () => {
   });
 
   // GDPR mandatory route. Deleting shop information here
-  router.post(
-    "/shop/redact", 
-    async ctx => {
-      const { success, body } = await validateHmac(ctx);
-      if (!success) {
-        ctx.body = "Unauthorized";
-        ctx.status = 401;
-        return ctx;
-      }
-
-      logger.info("shop redact called");
-      const { shop_domain } = JSON.parse(body.toString());
-      await dbUtils.deleteShopInfo(shop_domain);
-      ctx.body = "OK";
-      ctx.status = 200;
+  router.post("/shop/redact", async (ctx) => {
+    const { success, body } = await validateHmac(ctx);
+    if (!success) {
+      ctx.body = "Unauthorized";
+      ctx.status = 401;
       return ctx;
+    }
+
+    logger.info("shop redact called");
+    const { shop_domain } = JSON.parse(body.toString());
+    await dbUtils.deleteShopInfo(shop_domain);
+    ctx.body = "OK";
+    ctx.status = 200;
+    return ctx;
   });
 
   // GDPR mandatory route. RudderStack is not storing any customer releated
   // information.
-  router.post("/customers/data_request", async ctx => {
+  router.post("/customers/data_request", async (ctx) => {
     const { success } = await validateHmac(ctx);
     if (!success) {
       ctx.body = "Unauthorized";
@@ -275,10 +296,10 @@ app.prepare().then(async () => {
     ctx.status = 200;
     return ctx;
   });
-  
+
   // GDPR mandatory route. RudderStack is not storing any customer releated
   // information.
-  router.post("/customers/redact", async ctx => {
+  router.post("/customers/redact", async (ctx) => {
     const { success } = await validateHmac(ctx);
     if (!success) {
       ctx.body = "Unauthorized";
@@ -293,7 +314,6 @@ app.prepare().then(async () => {
   router.get("(/_next/static/.*)", handleRequest); // Static content is clear
   router.get("/_next/webpack-hmr", handleRequest); // Webpack content is clear
   router.get("/", async (ctx) => {
-
     if (ctx.header["x-shopify-hmac-sha256"]) {
       const { success } = await validateHmac(ctx);
       if (!success) {
@@ -302,7 +322,7 @@ app.prepare().then(async () => {
         return ctx;
       }
     }
-    
+
     const shop = ctx.query.shop;
     if (!shop) {
       ctx.body = "Shop info is required";
