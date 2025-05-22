@@ -91,49 +91,37 @@ app.prepare().then(async () => {
     createShopifyAuth({
       accessMode: "offline",
       async afterAuth(ctx) {
-        // Access token and shop available in ctx.state.shopify
-        // const { shop, accessToken, scope } = ctx.state.shopify;
-        logger.info("Shopify Auth");
+        logger.info("Shopify Auth - afterAuth called");
         const { shop, accessToken, scope } = ctx.state.shopify;
         const host = ctx.query.host;
+        logger.info(
+          `afterAuth: shop=${shop}, accessToken=${accessToken}, scope=${scope}, host=${host}`
+        );
+
         ACTIVE_SHOPIFY_SHOPS[shop] = scope;
 
         try {
           const currentShopInfo = await dbUtils.getDataByShop(shop);
+          logger.info(
+            `afterAuth: currentShopInfo=${JSON.stringify(currentShopInfo)}`
+          );
           if (currentShopInfo) {
-            // update only access token if shop entry exists
             currentShopInfo.config.accessToken = accessToken;
             await dbUtils.updateShopInfo(shop, currentShopInfo);
+            logger.info("afterAuth: updated existing shop info");
           } else {
-            // make new entry for shop info
             const newShopInfo = {
               shopname: shop,
-              config: {
-                accessToken,
-              },
+              config: { accessToken },
             };
-            logger.info("inserting shop info");
+            logger.info("afterAuth: inserting new shop info");
             await dbUtils.insertShopInfo(newShopInfo);
+            logger.info("afterAuth: inserted new shop info");
           }
         } catch (err) {
-          // TODO: setup alerts
-          logger.error(`error while querying DB: ${err}`);
+          logger.error(`afterAuth: error while querying DB: ${err}`);
         }
 
-        const responses = await Shopify.Webhooks.Registry.register({
-          shop,
-          accessToken,
-          path: `/webhooks?shop=${shop}`,
-          topic: "APP_UNINSTALLED",
-        });
-
-        if (!responses["APP_UNINSTALLED"].success) {
-          logger.info(
-            `Failed to register APP_UNINSTALLED webhook: ${responses.result}`
-          );
-        }
-
-        // Redirect to app with shop parameter upon auth
         ctx.redirect(`/?shop=${shop}&host=${host}`);
       },
     })
@@ -188,8 +176,7 @@ app.prepare().then(async () => {
       accessMode: "offline",
     }),
     async (ctx) => {
-      // const rudderWebhookUrl = ctx.request.query.url
-      const rudderWebhookUrl = process.env.RUDDERSTACK_WEBHOOK_URL; // Use .env value
+      const rudderWebhookUrl = ctx.request.query.url;
       const shop = ctx.get("shop");
 
       try {
@@ -212,8 +199,8 @@ app.prepare().then(async () => {
       accessMode: "offline",
     }),
     async (ctx) => {
-      // const rudderWebhookUrl = ctx.request.query.url;
-      const rudderWebhookUrl = process.env.RUDDERSTACK_WEBHOOK_URL; // Use .env value
+      // Revert to original: use the URL from the query string
+      const rudderWebhookUrl = ctx.request.query.url;
       const shop = ctx.get("shop");
       try {
         await updateWebhooksAndScriptTag(rudderWebhookUrl, shop);
@@ -330,7 +317,7 @@ app.prepare().then(async () => {
       return ctx;
     }
 
-    // This shop hasn't been seen yet, go through OAuth to create a session
+    // Reinstate standard auth check: redirect to /auth if shop not active or host missing
     if (ACTIVE_SHOPIFY_SHOPS[shop] === undefined || !ctx.query.host) {
       logger.info("redirecting to auth/shop");
       ctx.redirect(`/auth?shop=${shop}`);
@@ -342,7 +329,7 @@ app.prepare().then(async () => {
 
   server.use(router.allowedMethods());
   server.use(router.routes());
-  server.listen(port, () => {
-    logger.info(`> Ready on http://localhost:${port}`);
+  server.listen(port, "0.0.0.0", () => {
+    logger.info(`> Ready on http://0.0.0.0:${port}`);
   });
 });

@@ -1,12 +1,11 @@
-import ApolloClient from "apollo-boost";
-import { ApolloProvider } from "react-apollo";
+import { ApolloProvider, ApolloClient, InMemoryCache } from "@apollo/client";
 import App from "next/app";
 import { AppProvider } from "@shopify/polaris";
 import { Provider, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticatedFetch, getSessionToken } from "@shopify/app-bridge-utils";
 import { Redirect } from "@shopify/app-bridge/actions";
-import "@shopify/polaris/dist/styles.css";
 import translations from "@shopify/polaris/locales/en.json";
+import Head from "next/head";
 
 function userLoggedInFetch(app) {
   const fetchFunction = authenticatedFetch(app);
@@ -33,8 +32,9 @@ function userLoggedInFetch(app) {
 function MyProvider(props) {
   const app = useAppBridge();
 
-
   const client = new ApolloClient({
+    uri: "/graphql", // or your GraphQL endpoint
+    cache: new InMemoryCache(),
     fetch: userLoggedInFetch(app),
     fetchOptions: {
       credentials: "include",
@@ -54,17 +54,25 @@ class MyApp extends App {
   render() {
     const { Component, pageProps, host } = this.props;
     return (
-      <AppProvider i18n={translations}>
-        <Provider
-          config={{
-            apiKey: API_KEY,
-            host: host,
-            forceRedirect: true,
-          }}
-        >
-          <MyProvider Component={Component} {...pageProps} />
-        </Provider>
-      </AppProvider>
+      <>
+        <Head>
+          <link
+            rel="stylesheet"
+            href="https://unpkg.com/@shopify/polaris@8.2.2/build/esm/styles.css"
+          />
+        </Head>
+        <AppProvider i18n={translations}>
+          <Provider
+            config={{
+              apiKey: API_KEY,
+              host: host,
+              forceRedirect: true,
+            }}
+          >
+            <MyProvider Component={Component} {...pageProps} />
+          </Provider>
+        </AppProvider>
+      </>
     );
   }
 }

@@ -40,7 +40,7 @@ services:
       SHOPIFY_API_KEY: d43478c79082e36635626c2ca32c15bc
       SHOPIFY_API_SECRET: 1b990be67b73dadd5587ed030b58731f
       SHOP: pen-and-paper-ai.myshopify.com
-      HOST: https://2914-84-181-55-202.ngrok-free.app
+      HOST: https://6387-94-114-245-47.ngrok-free.app
       DB_HOST: mongo
       DB_PORT: 27017
       DB_NAME: shopify_new_db
